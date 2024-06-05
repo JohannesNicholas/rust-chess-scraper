@@ -1,101 +1,165 @@
-use std::error::Error;
+use std::{borrow::BorrowMut, error::Error, option};
 
 use thirtyfour::prelude::*;
 
 //a struct to keep the data of a piece
 struct Piece {
     piece_type: String,
-    square: u8,
+    square_x: u8,
+    square_y: u8,
     dragged: bool,
     x_pos: f32,
     y_pos: f32,
 }
 
-fn extract_piece_type_from_classes(classes: &String) -> Option<String> {
-    match classes.split_whitespace().nth(1) {
-        Some(piece_type) => {
-            Some(piece_type.to_string())
+fn u8_from_char(c: &Option<char>) -> Option<u8> {
+    let c = *c;
+    c?.to_digit(10)?.try_into().ok()
+}
+
+fn square_from_class(class: &String) -> Option<(u8,u8)> {
+
+    let mut chars = class.chars();
+
+    let second_last = u8_from_char(&chars.nth(class.len()-2));
+    let last = u8_from_char(&chars.last());
+
+    match last {
+        Some(last) => {
+            match second_last {
+                Some(second_last) => {
+                    return Some((second_last, last))
+                },
+                None => {
+                    None
+                }
+            }
         },
         None => {
             None
         }
     }
-}
-
-fn extract_square_from_classes(classes: &String) -> Option<u8> {
-    let classes = classes.split_whitespace();
-
-    for class in classes {
-        if class.starts_with("square-") {
-            match class.split("-").nth(1) {
-                Some(square) => {
-                    return square.parse::<u8>().ok();
-                },
-                None => {
-                    return None;
-                }
-            } 
-        }
-    }
-    None
 }
 
 fn extract_piece_from_classes(classes: String) -> Option<Piece> {
 
+    let mut piece = Piece {
+        piece_type: "".to_string(),
+        square_x: 0,
+        square_y: 0,
+        dragged: false,
+        x_pos: 0.0,
+        y_pos: 0.0,
+    };
+
+    let classes_split = classes.split_whitespace();
+
     
-
-    for (i, class) in classes.split_whitespace().enumerate() {
-        if (i == 1) {
-            
-        }
-    }
-
-    //get the piece type
-    let piece_type = extract_piece_type_from_classes(&classes);
-    //get the square
-    let square = extract_square_from_classes(&classes);
-    //create a piece struct
-    match piece_type {
-        Some(piece_type) => {
-            match square {
-                Some(square) => {
-                    Some(Piece {
-                        piece_type: piece_type,
-                        square: square,
-                        dragged: false,
-                        x_pos: 0.0,
-                        y_pos: 0.0,
-                    })
-                },
-                None => {
-                    None
+    let mut count: i8 = 0;
+    for (index, class) in classes_split.enumerate() {
+        count += 1;
+        
+        match index {
+            0 => {
+                if class != "piece" {
+                    return None;
+                }
+            },
+            1 => {
+                piece.piece_type = class.to_string();
+            },
+            2 => {
+                match square_from_class(&class.to_string()) {
+                    Some((x,y)) => {
+                        piece.square_x = x;
+                        piece.square_y = y;
+                    },
+                    None => {
+                        return None;
+                    }
+                }
+            },
+            3 => {
+                if class == "dragging" {
+                    piece.dragged = true;
                 }
             }
-        },
-        None => {
-            None
+            _ => {}
         }
     }
+    if count < 3 {
+        return None;
+    }
+
+    Some(piece)
+}
+
+fn set_piece_position(mut piece: Piece, transform: String) -> Piece{
+    let mut transform = transform.split("matrix(").nth(1);
+
+    match transform {
+        Some(t) => {
+            transform = t.split(")").nth(0);
+        },
+        None => {}
+    }
+
+    
+    match transform {
+        Some(transform) => {
+            let mut transform = transform.split(", ");
+            let x = transform.nth(4);
+            let y = transform.next();
+
+            match x {
+                Some(x) => {
+                    
+                    piece.x_pos = x.parse().unwrap_or(0.0);
+                },
+                None => {}
+            }
+
+            match y {
+                Some(y) => {
+                    piece.y_pos = y.parse().unwrap_or(0.0);
+                },
+                None => {}
+            }
+        },
+        None => {}
+    }
+
+    piece
 }
 
 async fn extract_piece_data(elem: WebElement) -> Option<Piece> {
 
+    let mut piece: Option<Piece> = None;
+
     //get all of the classes of the element
-    match elem.attr("class").await {
-        Ok(classes) => {
-            match classes {
-                Some(classes) => {
-                    return extract_piece_from_classes(classes)
-                },
-                None => {
-                    None
-                }
-            }
+    match elem.attr("class").await.ok()? {
+        Some(classes) => {
+            piece = extract_piece_from_classes(classes);
         },
-        Err(_) => {
-            None
+        None => {
+            return None
         }
     }
+
+    //get the transform css property
+    match elem.css_value("transform").await.ok() {
+        Some(transform) => {
+            match piece {
+                Some(piece_guarantee) => {
+                    piece = Some(set_piece_position(piece_guarantee, transform));
+                },
+                None => {}
+            }
+        },
+        None => {}
+    }
+
+    return piece
 
 }
 
@@ -162,7 +226,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
         //print the pieces
         for piece in pieces {
-            println!("Piece type: {}, Square: {}", piece.piece_type, piece.square);
+            println!(
+                "Piece type: {}, Square: {}{}, dragging: {}, x_pos: {}, y_pos: {}", 
+                piece.piece_type, 
+                piece.square_x, 
+                piece.square_y,
+                piece.dragged,
+                piece.x_pos,
+                piece.y_pos
+            );
         }
         
 
